@@ -30,7 +30,7 @@ import math
 import logging
 
 #Create and configure logger
-logging.basicConfig(filename="people_counter.log",format='%(asctime)s %(message)s',filemode='w')
+logging.basicConfig(filename="people_counter.log",format='%(asctime)s %(message)s',filemode='a')
 
 #Creating an object
 log=logging.getLogger()
@@ -78,38 +78,40 @@ def build_argparser():
     return parser
 
 
-def draw_masks(coords, frame, initial_w, initial_h, x, k):
+def draw_masks(result, frame, initial_w, initial_h, euclidean_distance, k):
         current_count = 0
-        ed = x
-        for obj in coords[0][0]:
+        euclidean_distance = euclidean_distance
+        for box in result[0][0]:
             # Draw bounding box for object when it's probability is more than the specified threshold
-            if obj[2] > prob_threshold:
-                xmin = int(obj[3] * initial_w)
-                ymin = int(obj[4] * initial_h)
-                xmax = int(obj[5] * initial_w)
-                ymax = int(obj[6] * initial_h)
+            conf = box[2]
+            if conf > prob_threshold:
+                xmin = int(box[3] * initial_w)
+                ymin = int(box[4] * initial_h)
+                xmax = int(box[5] * initial_w)
+                ymax = int(box[6] * initial_h)
                 cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (0, 0, 255), 1)
                 current_count = current_count + 1
 
+                # Center and mid point.
                 c_x = frame.shape[1]/2
                 c_y = frame.shape[0]/2
                 mid_x = (xmax + xmin)/2
                 mid_y = (ymax + ymin)/2
 
                 # Calculating distance
-                ed =  math.sqrt(math.pow(mid_x - c_x, 2) +  math.pow(mid_y - c_y, 2) * 1.0)
+                euclidean_distance =  math.sqrt(math.pow(mid_x - c_x, 2) +  math.pow(mid_y - c_y, 2) * 1.0)
                 k = 0
 
         if current_count < 1:
             k += 1
 
-        if ed>0 and k < 10:
+        if euclidean_distance>0 and k < 10:
             current_count = 1
             k += 1
             if k > 100:
                 k = 0
 
-        return frame, current_count, ed, k
+        return frame, current_count, euclidean_distance, k
 
 def connect_mqtt():
     ### TODO: Connect to the MQTT client ###
@@ -141,6 +143,10 @@ def infer_on_stream(args, client):
     cur_request_id = 0
     last_count = 0
     total_count = 0
+    duration = 0
+    color = (255,0,0)
+    temp_dist = 0
+    tk = 0
 
     ### TODO: Load the model through `infer_network` ###
     infer_network.load_model(model, device)
@@ -148,9 +154,7 @@ def infer_on_stream(args, client):
 
     n, c, h, w = infer_network.load_model(model, device)[1]
 
-    print(h)
-
-    print(w)
+    log.info("Input Dimensions of the loaded model {}{}{}{}".format(n,c,h,w))
 
     ### TODO: Handle the input stream ###
     # Live Camera feed
@@ -176,19 +180,18 @@ def infer_on_stream(args, client):
 
     global initial_w, initial_h, prob_threshold
 
-    total_count = 0
-    duration = 0
 
+
+    # Input frame width and height.
     width = cap.get(3)
     height = cap.get(4)
     prob_threshold = args.prob_threshold
-    temp = 0
-    tk = 0
 
     ### TODO: Loop until stream is over ###
     while cap.isOpened():
         ### TODO: Read from the video capture ###
         flag,frame = cap.read()
+        print("coming here")
         ### TODO: Pre-process the image as needed ###
         if not flag:
             break
@@ -206,7 +209,7 @@ def infer_on_stream(args, client):
         infer_network.exec_net(pro_image)
         ### TODO: Wait for the result ###
 
-        color = (255,0,0)
+
 
         if infer_network.wait() == 0:
             log.info("Coming to infer network result section")
@@ -214,23 +217,23 @@ def infer_on_stream(args, client):
             ### TODO: Get the results of the inference request ###
             result = infer_network.get_output()
             ### TODO: Extract any desired stats from the results ###
-            out_frame, current_count, d, tk = draw_masks(result,frame, width, height, temp, tk)
+            out_frame, current_count, dist, tk = draw_masks(result,frame, width, height, temp_dist, tk )
             # Printing Inference Time
             inf_time_message = "Inference time: {:.3f}ms".format(det_time * 1000)
             cv2.putText(out_frame, inf_time_message, (15, 15), cv2.FONT_HERSHEY_COMPLEX, 0.5, color, 1)
 
             # Calculate and send relevant information
-            if current_count > last_count: # New entry
+            if current_count > last_count:
                 start_time = time.time()
                 total_count = total_count + current_count - last_count
                 client.publish("person", json.dumps({"total": total_count}))
 
-            if current_count < last_count: # Average Time
+            if current_count < last_count:
                 duration = int(time.time() - start_time)
                 client.publish("person/duration", json.dumps({"duration": duration}))
 
             # Adding overlays to the frame
-            txt2 = "Distance: %d" %d + " Lost frame: %d" %tk
+            txt2 = "Distance: %d" %dist + " Lost frame: %d" %tk
             cv2.putText(out_frame, txt2, (15, 30), cv2.FONT_HERSHEY_COMPLEX, 0.5, color, 1)
 
             txt2 = "Current count: %d " %current_count
@@ -250,8 +253,9 @@ def infer_on_stream(args, client):
             client.publish("person", json.dumps({"count": current_count})) # People Count
 
             last_count = current_count
-            temp = d
-
+            temp_dist = dist
+            # Display the resulting frame
+            cv2.imshow('Output_Frame',out_frame)
             # Break if escape key is key_pressed
             if key_pressed == 27:
                 break

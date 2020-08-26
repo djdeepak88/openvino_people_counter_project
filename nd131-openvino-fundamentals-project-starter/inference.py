@@ -27,7 +27,7 @@ import sys
 import logging
 
 #Create and configure logger
-logging.basicConfig(filename="people_counter.log",format='%(asctime)s %(message)s',filemode='w')
+logging.basicConfig(filename="people_counter.log",format='%(asctime)s %(message)s',filemode='a')
 
 #Creating an object
 log=logging.getLogger()
@@ -65,11 +65,14 @@ class Network:
         self.net = IENetwork(model=model_xml, weights=model_bin)
         ### TODO: Check for supported layers ###
         supported_layers = plugin.query_network(self.net, device)
+
         unsupported_layers = [l for l in self.net.layers.keys() if l not in supported_layers]
+
         if len(unsupported_layers) != 0:
             print("Unsupported layers found: {}".format(unsupported_layers))
             print("Check whether extensions are available to add to IECore.")
             exit(1)
+
         ### TODO: Add any necessary extensions ###
         # No extension required for 2020.4 version of Openvino toolkit.
         ### TODO: Return the loaded inference plugin ###
@@ -79,15 +82,15 @@ class Network:
         log.info("Network input structure")
         log.info(list(self.net.inputs))
         log.info(list(self.net.inputs)[0])
-        #log.info(list(self.net.inputs)[1])
-        #log.info(self.net.inputs['image_info'].shape)
+        log.info(list(self.net.inputs)[1])
+        log.info(self.net.inputs['image_info'].shape)
         log.info(self.net.inputs['image_tensor'].shape)
-        self.input_blob = list(self.net.inputs)[0]
+        self.input_blob = list(self.net.inputs)[1]
         log.info("Input blob")
         log.info(self.input_blob)
         log.info("Network output structure")
         log.info(list(self.net.outputs))
-        #log.info(self.net.outputs['detection_output'].shape)
+        log.info(self.net.outputs['detection_output'].shape)
         self.out_blob = list(self.net.outputs)[0]
         log.info(self.out_blob)
         return plugin, self.get_input_shape()
